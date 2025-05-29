@@ -60,7 +60,7 @@ def train_and_save_model():
     env = SubprocVecEnv([make_env_fn(i) for i in range(num_cpu)])
 
     # Create progress bar and checkpoint callbacks
-    total_timesteps = 100_000
+    total_timesteps = 300_000
     progress_callback = ProgressBarCallback(total_timesteps=total_timesteps)
 
     checkpoint_callback = CheckpointCallback(
