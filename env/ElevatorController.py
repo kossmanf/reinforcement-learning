@@ -29,7 +29,6 @@ class ElevatorController:
             for i, obs_per_elevator in enumerate(splitted_obs):
                 action_mask = full_mask[i]  
 
-                print(action_mask)
                 # Predict action using model and action mask
                 action, _ = self.model.predict(
                     obs_per_elevator,

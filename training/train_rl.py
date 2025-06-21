@@ -1,19 +1,20 @@
+# === Imports ===
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))  # Add parent dir to path
 from gym_env.elevatorGym import ElevatorEnv
 import time
 from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, CallbackList
 import torch
-import os
 import re
-from sb3_contrib import MaskablePPO
+from sb3_contrib import MaskablePPO  # PPO variant supporting action masking
 from sb3_contrib.common.wrappers import ActionMasker
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
 
+# === Configuration Constants ===
 CHECKPOINT_DIR = "../model/checkpoints/"
 MODEL_DIR = "../model/"
 DATA_DIR = "../data/"
@@ -22,31 +23,35 @@ TOTAL_TIMESTEPS = 500_000
 TENSORBOARD_LOG_DIR = "../logs/tensorboard_logs/"
 TENSORBOARD_RUN_NAME = "run1"
 
+# === Load floor destination probability matrix ===
 def loadFloorDistribution(fileName, numFloors, simTime):
     path = os.path.join(DATA_DIR, fileName)
     try:
         with open(path, "r") as file:
             matrix = [list(map(float, line.split()[:numFloors])) for line in file if line.strip()]
     except FileNotFoundError:
-        print(f"{path} not found. Using uniform distribution.") 
-        matrix = [] 
- 
-    expected_columns = numFloors 
-    expected_rows = simTime 
- 
-    valid = ( 
-        len(matrix) >= expected_rows 
-        and all(len(row) == expected_columns for row in matrix) 
-        and all(abs(sum(row) - 1.0) < 1e-9 for row in matrix) 
-    ) 
- 
-    if not valid: 
+        print(f"{path} not found. Using uniform distribution.")
+        matrix = []
+
+    expected_columns = numFloors
+    expected_rows = simTime
+
+    valid = (
+        len(matrix) >= expected_rows and
+        all(len(row) == expected_columns for row in matrix) and
+        all(abs(sum(row) - 1.0) < 1e-9 for row in matrix)
+    )
+
+    if not valid:
+        # Fall back to uniform distribution if file is invalid or missing
         uniform_row = [1.0 / expected_columns] * expected_columns
         matrix = [uniform_row[:] for _ in range(expected_rows)]
         print("Invalid distribution file. Using uniform distribution.")
-    print(matrix)
+
+    print(matrix)  # Optional: remove for cleaner output
     return matrix
 
+# === Load average person arrival times ===
 def loadAverageArrivalTimes(fileName, default_time, simTime):
     path = os.path.join(DATA_DIR, fileName)
     try:
@@ -63,6 +68,7 @@ def loadAverageArrivalTimes(fileName, default_time, simTime):
 
     return matrix
 
+# === Initialize the Gym environment ===
 def make_env(seed=None):
     floorDistribution = loadFloorDistribution("../data/floorDistribution.txt", 10, 300)
     averageArrivalTimes = loadAverageArrivalTimes("../data/averageArivalTimes.txt", 20.0, 300)
@@ -75,14 +81,17 @@ def make_env(seed=None):
         simulation_time=300,
         fahrzeit=1.0,
         halt_zeit=0.5,
-        elevator_check_interval=1.0, 
+        elevator_check_interval=1.0,
         scanning=False
     )
     if seed is not None:
         env.seed(seed)
+
+    # Add action mask wrapper and monitoring
     env = ActionMasker(env, action_mask_fn=lambda env: env.getMask())
     return Monitor(env)
 
+# === Search for the latest checkpoint by naming convention ===
 def get_latest_checkpoint(path, prefix):
     if not os.path.exists(path):
         return None
@@ -94,6 +103,7 @@ def get_latest_checkpoint(path, prefix):
 
     return max(checkpoints, key=lambda x: x[0])[1] if checkpoints else None
 
+# === Load an existing model or initialize a new one ===
 def load_model_or_initialize(env):
     checkpoint_path = get_latest_checkpoint(CHECKPOINT_DIR, MODEL_PREFIX)
     if checkpoint_path:
@@ -103,6 +113,7 @@ def load_model_or_initialize(env):
         print("No checkpoint found. Initializing new model.")
         return MaskablePPO("MlpPolicy", env, device="cpu",  verbose=1, tensorboard_log=TENSORBOARD_LOG_DIR), False
 
+# === Callback: Print progress bar during training ===
 class ProgressBarCallback(BaseCallback):
     def __init__(self, total_timesteps, print_freq=1000):
         super().__init__()
@@ -122,12 +133,14 @@ class ProgressBarCallback(BaseCallback):
             print(f"Step {self.num_timesteps}/{self.total_timesteps} | Elapsed: {elapsed:.1f}s | ETA: {eta:.1f}s")
         return True
 
+# === Callback: Extended logging to TensorBoard (gradients, actions, metrics) ===
 class ExtendedLoggingCallback(BaseCallback):
     def __init__(self, log_dir, verbose=0):
         super().__init__(verbose)
         self.writer = SummaryWriter(log_dir)
 
     def _on_step(self) -> bool:
+        # Log global gradient norm
         norms = []
         for p in self.model.policy.parameters():
             if p.grad is not None:
@@ -136,10 +149,12 @@ class ExtendedLoggingCallback(BaseCallback):
             grad_norm = torch.norm(torch.stack(norms)).item()
             self.writer.add_scalar("gradients/global_norm", grad_norm, self.num_timesteps)
 
+        # Log action distribution
         actions = self.locals.get("actions")
         if actions is not None:
             self.writer.add_histogram("actions/distribution", np.array(actions), self.num_timesteps)
         
+        # Log environment-specific metrics (if available)
         if hasattr(self.training_env.envs[0].unwrapped, "get_metrics"):
             metrics = self.training_env.envs[0].unwrapped.get_metrics()
             for key, value in metrics.items():
@@ -150,11 +165,13 @@ class ExtendedLoggingCallback(BaseCallback):
     def _on_training_end(self):
         self.writer.close()
 
+# === Training loop with saving and logging ===
 def train_and_save_model():
     os.makedirs(MODEL_DIR, exist_ok=True)
     env = make_env(seed=0)
     model, was_loaded = load_model_or_initialize(env)
 
+    # Setup callbacks
     progress_callback = ProgressBarCallback(total_timesteps=TOTAL_TIMESTEPS)
     checkpoint_callback = CheckpointCallback(
         save_freq=10_000,
@@ -164,6 +181,7 @@ def train_and_save_model():
     extended_logging = ExtendedLoggingCallback(os.path.join(TENSORBOARD_LOG_DIR, TENSORBOARD_RUN_NAME))
     callback = CallbackList([progress_callback, checkpoint_callback, extended_logging])
 
+    # Start training
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,
         callback=callback,
@@ -171,9 +189,11 @@ def train_and_save_model():
         tb_log_name=TENSORBOARD_RUN_NAME
     )
 
+    # Save final model
     model.save(os.path.join(MODEL_DIR, MODEL_PREFIX))
     print(f"Model saved as '{os.path.join(MODEL_DIR, MODEL_PREFIX)}.zip'")
 
+# === Main entry point ===
 if __name__ == "__main__":
     print("CUDA available:", torch.cuda.is_available())
     print("Device:", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU only")

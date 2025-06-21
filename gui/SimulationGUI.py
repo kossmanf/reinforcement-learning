@@ -20,7 +20,7 @@ class SimulationGUI:
         self.root = root
         self.root.title("Elevator Simulation Parameters")
 
-       # Section title: Floor and Elevator Settings
+        # Section title: Floor and Elevator Settings
         tk.Label(root, text="Floor and Elevator Settings", font=("Arial", 10, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", padx=5, pady=(10,2))
 
         tk.Label(root, text="Number of Floors:").grid(row=1, column=0, sticky=tk.W, padx=5, pady=5)
@@ -241,18 +241,20 @@ class SimulationGUI:
         self._stop_flag = True
 
     def on_simulation_finished(self):
-        # Finalize the simulation and display results
+        # Finalize the simulation and update the UI accordingly
         self.status_label.config(text="Simulation finished/stopped.", fg="blue")
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
 
+        # If metric data was collected during the run, visualize it
         if hasattr(self, "metrics_over_time"):
             fig = plt.figure(figsize=(10, 6))
             plot_metrics_over_time(self.metrics_over_time, fig)
-        
-        # resetting the calculated metrics
+
+        # Reset all collected performance metrics in the House object
         self.house.reset_metrics()
 
+        
         # Ich habe den Fehler behoben, dass die Listen nicht zwischen den Simulationsdurchläufen geleert wurden.
         # Dadurch wurden alte Werte weiter angehängt, was zu fehlerhaften Plots geführt hat.
         # Jetzt werden die Metriken vor jedem Durchlauf korrekt zurückgesetzt.
@@ -262,9 +264,8 @@ class SimulationGUI:
         self.metrics_over_time["avg_idle"] = []
         self.metrics_over_time["avg_building"] = []
 
-
     def sample_averages_over_time(self, target_time):
-        # Sample average performance metrics over time for plotting
+        # Collect performance metrics at the current time step for plotting
         if not hasattr(self, "metrics_over_time"):
             self.metrics_over_time = {
                 "time": [],
@@ -284,7 +285,7 @@ class SimulationGUI:
     def loadFloorDistribution(self, fileName, numFloors, simTime):
         try:
             with open(fileName, "r") as file:
-                # Only take the first numFloors elements in each row
+                # Load and truncate each row to only use numFloors values
                 matrix = [list(map(float, line.split()[:numFloors])) for line in file if line.strip()]
         except FileNotFoundError:
             print("File not found. Using uniform distribution.")
@@ -293,16 +294,19 @@ class SimulationGUI:
         expected_columns = numFloors
         expected_rows = simTime
 
+        # Validate the matrix: row count, column count, and row sum ~ 1.0
         valid = (
             len(matrix) >= expected_rows
             and all(len(row) == expected_columns for row in matrix)
             and all(abs(sum(row) - 1.0) < 1e-9 for row in matrix)
         )
 
+        # Fallback to uniform distribution if validation fails
         if not valid:
             uniform_row = [1.0 / expected_columns] * expected_columns
             matrix = [uniform_row[:] for _ in range(expected_rows)]
             print("Invalid distribution file. Using uniform distribution.")
+
         print(matrix)
         return matrix
 
@@ -315,18 +319,19 @@ class SimulationGUI:
             print("File not found. Using default average arrival times.")
             matrix = [default_time] * simTime
 
+        # Validate length and fallback to default if too short
         if len(matrix) < simTime:
             print(f"Invalid data length. Expected {simTime}, got {len(matrix)}.")
             matrix = [default_time] * simTime
 
         return matrix
-    
+
     def run_simpy_with_model(self, model_filename):
-        # Load data
+        # Load simulation configuration files
         floorDistribution = self.loadFloorDistribution(self.floor_file, 10, 300)
         averrageArivalTimes = self.loadAverageArrivalTimes(self.arrival_file, 20.0, 300)
 
-        # Create Gym/SimPy environment
+        # Create environment with shared Gym + SimPy logic
         self.gym_env = ElevatorEnv(
             floorDistribution,
             averrageArivalTimes,
@@ -341,29 +346,14 @@ class SimulationGUI:
         )
 
         if self.use_model_var.get():
-            # Create Gym/SimPy environment
-            self.gym_env = ElevatorEnv(
-                floorDistribution,
-                averrageArivalTimes,
-                num_floors=self.num_floors,
-                num_elevators=self.num_elevators,
-                elevator_capacity=self.capacity,
-                simulation_time=self.total_time,
-                fahrzeit=self.travel_time,
-                halt_zeit=self.stop_time,
-                elevator_check_interval=self.elevator_interval,
-                scanning=False
-            )
-
-            # Load trained model
+            # Load trained RL model and bind it to the environment
             self.model = MaskablePPO.load(model_filename)
-            self.house =  self.gym_env.house
+            self.house = self.gym_env.house
             self.house.model = self.model
             self.house.gym_env = self.gym_env
             self.house.run_controller()
-        
-        if not self.use_model_var.get():
-            # Create Gym/SimPy environment
+        else:
+            # Create environment with rule-based (scanning) logic
             self.gym_env = ElevatorEnv(
                 floorDistribution,
                 averrageArivalTimes,
@@ -376,7 +366,6 @@ class SimulationGUI:
                 elevator_check_interval=self.elevator_interval,
                 scanning=True
             )
-
-            self.house =  self.gym_env.house
+            self.house = self.gym_env.house
             self.house.gym_env = self.gym_env
             self.house.run_dispatcher()

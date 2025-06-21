@@ -1,8 +1,10 @@
 import logging
 import os
 
+# Ensure the log directory exists
 os.makedirs("../logs", exist_ok=True)
 
+# Logger setup for elevator
 elevator_logger = logging.getLogger("elevator")
 elevator_logger.setLevel(logging.INFO)
 
@@ -24,22 +26,23 @@ class Aufzug:
         self.kapazitaet = kapazitaet
         self.house = house
         self.current_floor = 0
-        self.direction = 0  
+        self.direction = 0  # 1: up, -1: down, 0: idle
         self.fahrzeit = fahrzeit
         self.halte_zeit = halte_zeit
         self.check_interval_elevator = check_interval_elevator
 
         self.passengers = []
-        self.zielstoecke = set()
+        self.zielstoecke = set()  # Target floors
 
+        # Metrics
         self.idle_times = []
         self.traveling_times = []
         self.waiting_times = []
 
         self.idle_since = env.now
-
         self.last_reward = 0
 
+        # Reward weights and values
         self.weight_unloading = 0.8
         self.weight_loading = 0.2
         self.weight_idle = 0
@@ -82,42 +85,41 @@ class Aufzug:
                 self.idle_times.append(time_now - self.idle_since)
 
             if self.current_floor < len(self.house.floors) - 1:
-                # not at top floor
+                # Not at top floor
                 self.direction = 1
                 self.current_floor += 1
                 log_msg = "went up"
                 elevator_logger.info(log_msg)
                 yield self.env.timeout(self.fahrzeit)
 
-            # direction change
-            if self.current_floor == len(self.house.floors) -1:
-                self.direction = - 1
+            # Change direction at top
+            if self.current_floor == len(self.house.floors) - 1:
+                self.direction = -1
 
         elif action == "down":
             if self.direction == 0:
-                    time_now = self.env.now
-                    self.idle_times.append(time_now - self.idle_since)
+                time_now = self.env.now
+                self.idle_times.append(time_now - self.idle_since)
         
             if self.current_floor > 0:
-                # not at bottom floor
+                # Not at bottom floor
                 self.direction = -1
                 self.current_floor -= 1
                 log_msg = "went down"
                 elevator_logger.info(log_msg)
                 yield self.env.timeout(self.fahrzeit)
             
-            # direction change
+            # Change direction at bottom
             if self.current_floor == 0:
                 self.direction = 1
-            
                 
         elif action == "stop":
             self.zielstoecke.discard(self.current_floor)
-            unloading_reward  = yield self.env.process(self.unload_passengers())
+            unloading_reward = yield self.env.process(self.unload_passengers())
             loading_reward = yield self.env.process(self.load_passengers())
 
+            # Enter idle if no tasks and empty
             if not self.is_waiting() and not self.has_pending_targets() and self.is_empty():
-                '''going into idle'''
                 if self.direction != 0:
                     self.idle_since = self.env.now
                     idle_reward = self.idle_reward_value
@@ -128,8 +130,8 @@ class Aufzug:
                 yield self.env.timeout(self.halte_zeit)
     
         reward = (self.weight_unloading * unloading_reward +
-                self.weight_loading * loading_reward +
-                self.weight_idle * idle_reward)
+                  self.weight_loading * loading_reward +
+                  self.weight_idle * idle_reward)
         self.last_reward = reward   
 
         log_msg = (
@@ -146,14 +148,13 @@ class Aufzug:
         """
         Unload passengers whose destination is the current floor.
         """
-        log_msg = "unloading passangers"
+        log_msg = "unloading passengers"
         elevator_logger.info(log_msg)
         
         exiting = [p for p in self.passengers if p.targetFloor == self.current_floor]
-
         reward = 0
-
         unloaded = False
+
         for passenger in exiting:
             self.passengers.remove(passenger)
             passenger.currentFloor = self.current_floor
@@ -163,7 +164,7 @@ class Aufzug:
             self.traveling_times.append(ride_time)
             unloaded = True
 
-        log_msg = "unloaded passangers"
+        log_msg = "unloaded passengers"
         elevator_logger.info(log_msg)
 
         if unloaded:
@@ -178,16 +179,15 @@ class Aufzug:
         - DOWN: only from elevatorQueueDown
         - IDLE: from either queue
         """
-    
-        log_msg = "loading passangers"
+        log_msg = "loading passengers"
         elevator_logger.info(log_msg)
+
         floor = self.house.floors[self.current_floor]
         reward = 0
         
         assert 0 <= self.current_floor < len(self.house.floors), f"Invalid floor: {self.current_floor}"
 
         queue = floor.elevatorQueueUp
-
         if self.direction == -1:
             queue = floor.elevatorQueueDown
         
@@ -202,7 +202,7 @@ class Aufzug:
             self.waiting_times.append(wait_time)
             loaded = True
         
-        log_msg = "loaded passangers"
+        log_msg = "loaded passengers"
         elevator_logger.info(log_msg)
 
         if loaded:
@@ -211,6 +211,9 @@ class Aufzug:
         return reward
 
     def is_empty(self):
+        """
+        Returns True if the elevator has no passengers.
+        """
         return len(self.passengers) == 0
 
     def is_waiting(self):
@@ -224,4 +227,7 @@ class Aufzug:
         )
     
     def has_pending_targets(self):
+        """
+        Returns True if the elevator has pending target floors.
+        """
         return len(self.zielstoecke) > 0

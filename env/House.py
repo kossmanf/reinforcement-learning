@@ -12,7 +12,7 @@ from .Aufzug_scanning import Aufzug_scanning
 from .Dispatcher import Dispatcher
 from .ElevatorController import ElevatorController
 
-# Log-Verzeichnis sicherstellen
+# Ensure log directory exists
 os.makedirs("../logs", exist_ok=True)
 
 # Logger setup
@@ -55,7 +55,7 @@ class House:
         # Create floors
         self.floors = [Floor(self.env, i) for i in range(num_floors)]
 
-        # Create elevators
+        # Create elevators (standard or scanning mode)
         if not scanning:
             self.elevators = []
             for eid in range(num_elevators):
@@ -103,15 +103,13 @@ class House:
         self.averageArrivalTimes = averageArrivalTimes 
     
     def run_controller(self):
-        # creating the elevator controller
+        # Create and start the elevator controller
         self.controller = ElevatorController(self.env, self.model, self.gym_env)
-        # Start controller process
         self.env.process(self.controller.elevator_controller(interval=self.CHECK_INTERVAL_DISPATCHER))
     
     def run_dispatcher(self):
-        # creating the elevator dispatcher
+        # Create and start the elevator dispatcher
         dispatcher = Dispatcher(self.env, self, check_interval=self.CHECK_INTERVAL_DISPATCHER)
-        # Start dispatcher process
         self.env.process(dispatcher.run())
 
     def person_spawner(self):
@@ -132,11 +130,11 @@ class House:
 
             start = 0  # always floor 0
 
-            # Create new person
+            # Create new person (target is temporary and may change later)
             p = Person(
                 person_id=self.person_counter,
                 startFloor=start,
-                targetFloor=start,  # erstmal temporär, eventuell wird Ziel geändert
+                targetFloor=start,
                 spawn_time=self.env.now
             )
             self.person_counter += 1
@@ -144,10 +142,10 @@ class House:
 
             floor = self.floors[start]
 
-            # Decide if the person stays at ground floor idle
+            # Decide if the person stays idle at ground floor
             if rnd.random() < House.STAY_ON_GROUND_PROBABILITY:
                 yield floor.idlePeople.put(p)
-                logger.info(f"[t={self.env.now:.1f}] {p} spawnt im EG und bleibt dort idle.")
+                logger.info(f"[t={self.env.now:.1f}] {p} spawns at ground floor and stays idle.")
                 continue
 
             # Otherwise assign a random target floor
@@ -162,7 +160,7 @@ class House:
             # Person enters the elevator queue
             p.enter_queue_time = self.env.now
             yield floor.elevatorQueueUp.put(p)
-            logger.info(f"[t={self.env.now:.1f}] NEUE {p} spawnt im EG, Ziel={target}")
+            logger.info(f"[t={self.env.now:.1f}] NEW {p} spawns at ground floor, target={target}")
     
     def person_despawner(self):
         """
@@ -183,7 +181,7 @@ class House:
                     person.leave_building_time = self.env.now
                     self.time_in_building.append(person.leave_building_time - person.spawn_time)
                     people_to_remove.append(person)
-                    logger.info(f"[t={self.env.now:.1f}] {person} wartet im EG und verlässt das Gebäude.")
+                    logger.info(f"[t={self.env.now:.1f}] {person} was idle and leaves the building.")
 
             for p in people_to_remove:
                 ground_floor.idlePeople.items.remove(p)
@@ -200,20 +198,20 @@ class House:
             if time_index >= len(self.floor_distribution):
                 time_index = len(self.floor_distribution) - 1
 
-            # Collect idle people
+            # Collect idle people from all floors
             all_idle_people = []
             for floor in self.floors:
                 all_idle_people.extend(floor.idlePeople.items)
 
             if not all_idle_people:
-                continue  # No idle person to reassign
+                continue
 
             # Pick a random idle person
             person = rnd.choice(all_idle_people)
             current_floor = person.currentFloor
             floor = self.floors[current_floor]
 
-            # Otherwise assign a new target floor
+            # Assign a new target floor
             probs = self.floor_distribution[time_index]
             new_target = rnd.choices(
                 population=list(range(0, self.num_floors)),
@@ -221,7 +219,7 @@ class House:
                 k=1
             )[0]
 
-            # Make sure person does not choose their current floor
+            # Avoid choosing the same floor as current
             while new_target == current_floor:
                 new_target = rnd.choices(
                     population=list(range(0, self.num_floors)),
@@ -229,22 +227,17 @@ class House:
                     k=1
                 )[0]
             
-            print('-------------------------------------------------------------------------------------:')
-            print(list(range(0, self.num_floors)))
-            print(person.person_id )
-            print(new_target)
-
-            # Update person state 
+            # Update person state
             person.targetFloor = new_target
             person.enter_queue_time = self.env.now
             floor.idlePeople.items.remove(person)
 
             if new_target < current_floor:
                 yield floor.elevatorQueueDown.put(person)
-                logger.info(f"[t={self.env.now:.1f}] {person} auf {floor} wählt neues Ziel {new_target} (DOWN).")
+                logger.info(f"[t={self.env.now:.1f}] {person} on {floor} chooses new target {new_target} (DOWN).")
             else:
                 yield floor.elevatorQueueUp.put(person)
-                logger.info(f"[t={self.env.now:.1f}] {person} auf {floor} wählt neues Ziel {new_target} (UP).")
+                logger.info(f"[t={self.env.now:.1f}] {person} on {floor} chooses new target {new_target} (UP).")
 
     def get_average_metrics(self):
         """
@@ -275,6 +268,9 @@ class House:
         }
     
     def reset_metrics(self):
+        """
+        Resets collected metrics for a fresh simulation run.
+        """
         self.waiting_times = []
         self.time_in_building = []
         for elev in self.elevators:
@@ -282,6 +278,9 @@ class House:
             elev.idle_times = []
     
     def get_state(self):
+        """
+        Returns the current state of the house (for use in external components or models).
+        """
         return {
             'floors': self.floors,
             'simpy_env': self.env,
