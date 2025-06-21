@@ -1,4 +1,3 @@
-
 # 🚀 Multi-Elevator Reinforcement Learning Simulation
 
 This project simulates a building with multiple elevators and trains a reinforcement learning (RL) agent to control elevator movements efficiently using [Stable-Baselines3](https://github.com/DLR-RM/stable-baselines3) and [SimPy](https://simpy.readthedocs.io/).
@@ -67,6 +66,14 @@ This project simulates a building with multiple elevators and trains a reinforce
 
 ---
 
+### 🔢 Evaluation
+
+- **`eval/eval.py`**  
+  Compares scanning vs RL-based control over multiple runs. Collects performance metrics (e.g. waiting/traveling time), averages them, and plots them.
+  Automatically caches CSV results to avoid redundant runs.
+
+---
+
 ## 📦 Python Modules
 
 This project uses a modular structure with two internal packages:
@@ -91,6 +98,9 @@ Make sure each subfolder contains an `__init__.py` file to enable proper imports
 
 - **`model/`**  
   The final saved model after training.
+
+- **`results/`**  
+  Stores CSV summaries of evaluation runs for plotting and comparison.
 
 ---
 

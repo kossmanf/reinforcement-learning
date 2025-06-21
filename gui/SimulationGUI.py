@@ -14,6 +14,14 @@ import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from env.House import House
 
+print("PYTHON:", sys.executable)
+
+try:
+    import matplotlib.pyplot as plt
+    print("matplotlib OK")
+except ModuleNotFoundError as e:
+    print("FEHLER:", e)
+
 class SimulationGUI:
     def __init__(self, root):
         # Initialize the main window and input fields
